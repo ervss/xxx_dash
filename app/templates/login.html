@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Login - Quantum VIP</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <div class="login-container">
+        <form id="login-form">
+            <h2>Quantum VIP Login</h2>
+            <input type="password" id="password" name="password" placeholder="Password" required>
+            <button type="submit">Login</button>
+            <p id="error-message" class="error" style="display: none;"></p>
+        </form>
+    </div>
+    <script>
+        document.getElementById('login-form').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const password = document.getElementById('password').value;
+            const response = await fetch('/login', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({ password })
+            });
+            if (response.ok) {
+                window.location.href = '/';
+            } else {
+                const data = await response.json();
+                const errorMessage = document.getElementById('error-message');
+                errorMessage.textContent = data.detail || 'Invalid password';
+                errorMessage.style.display = 'block';
+            }
+        });
+    </script>
+</body>
+</html>

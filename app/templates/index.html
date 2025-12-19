@@ -1,0 +1,803 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>QUANTUM VIP V2</title>
+  <link rel="stylesheet" href="/static/style.css?v=vip_v2_final_fix" />
+  <link href="https://fonts.googleapis.com/icon?family=Material+Icons+Round" rel="stylesheet">
+  <script src="/static/main.js?v=vip_v2_final_fix" defer></script>
+  <script src="https://unpkg.com/alpinejs@3.13.3/dist/cdn.min.js" defer></script>
+  <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
+
+  <style>
+    .modal-card { position: relative; }
+    .import-loader {
+      position: absolute; inset: 0; background: rgba(0,0,0,0.5);
+      display: flex; align-items: center; justify-content: center;
+      z-index: 30; color: #fff; font-weight: 600;
+    }
+    .import-loader .spinner {
+      width: 34px; height: 34px; border: 4px solid rgba(255,255,255,0.2);
+      border-top-color: #fff; border-radius: 50%; animation: spin 1s linear infinite; margin-right: 12px;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .v-title { color: #e6eef8; }
+    .v-tags span { background: rgba(255,255,255,0.06); color: #dbeafe; }
+    @media (max-width: 700px) {
+      .vip-grid { grid-template-columns: repeat(2, 1fr); gap: 8px; padding: 8px; }
+      .sidebar { display: none; }
+      .player-container { width: 100%; height: 100%; }
+      .top-bar .search-wrapper input { width: 140px; }
+    }
+    .drag-overlay {
+      position: fixed;
+      z-index: 1000;
+      inset: 0;
+      background: rgba(30,30,40,0.7);
+      color: #fff;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      pointer-events: none;
+      opacity: 0;
+      transition: opacity 0.2s;
+    }
+    .drag-overlay.active {
+      pointer-events: all;
+      opacity: 1;
+    }
+  </style>
+</head>
+<body x-data="dashboard" :class="{'player-open': showPlayer, 'batch-mode': batchMode}">
+    <!-- Import Progress Bar -->
+    <div id="import-progress-bar" x-show="importProgress.active" style="position:fixed;top:0;left:0;width:100vw;z-index:1001;background:rgba(0,0,0,0.9);backdrop-filter:blur(10px);padding:12px 20px;box-shadow:0 4px 20px rgba(0,0,0,0.5);">
+        <div style="display:flex;align-items:center;gap:15px;max-width:1200px;margin:0 auto;">
+            <div style="flex:1;">
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+                    <div style="color:#fff;font-weight:600;font-size:14px;">
+                        <span class="material-icons-round" style="font-size:18px;vertical-align:middle;margin-right:6px;">cloud_download</span>
+                        Importing from .txt
+                    </div>
+                    <div style="color:#22d3ee;font-weight:700;font-size:14px;" x-text="`${importProgress.done} / ${importProgress.total}`"></div>
+                </div>
+                <div style="height:8px;background:rgba(255,255,255,0.1);border-radius:4px;overflow:hidden;position:relative;">
+                    <div :style="`width: ${importProgress.percent}%;height:100%;background:linear-gradient(90deg,#22d3ee,#16a34a);transition:width 0.3s;box-shadow:0 0 10px rgba(34,211,238,0.5);`"></div>
+                </div>
+                <div style="display:flex;justify-content:space-between;margin-top:4px;font-size:11px;color:#888;">
+                    <span x-text="`${importProgress.percent}% complete`"></span>
+                    <span x-show="importProgress.eta > 0" x-text="`ETA: ${formatTime(importProgress.eta)}`"></span>
+                </div>
+            </div>
+            <button @click="importProgress.active = false" style="background:rgba(255,255,255,0.1);border:none;color:#fff;padding:6px 12px;border-radius:4px;cursor:pointer;font-size:12px;">Hide</button>
+        </div>
+    </div>
+    
+    <!-- Turbo Download Progress Panel -->
+    <div x-show="Object.keys(turboDownloads).length > 0" style="position:fixed;bottom:20px;right:20px;z-index:1000;background:rgba(0,0,0,0.95);backdrop-filter:blur(10px);border-radius:12px;padding:16px;min-width:320px;max-width:400px;box-shadow:0 8px 32px rgba(0,0,0,0.6);border:1px solid rgba(34,211,238,0.3);">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+            <div style="color:#22d3ee;font-weight:700;font-size:14px;display:flex;align-items:center;gap:6px;">
+                <span class="material-icons-round" style="font-size:20px;">bolt</span>
+                Turbo Downloads
+            </div>
+            <button @click="turboDownloads = {}; stopTurboDownloadPolling()" style="background:none;border:none;color:#888;cursor:pointer;padding:4px;">
+                <span class="material-icons-round" style="font-size:18px;">close</span>
+            </button>
+        </div>
+        <div style="max-height:300px;overflow-y:auto;">
+            <template x-for="(download, gid) in turboDownloads" :key="gid">
+                <div :style="`background:${download.status === 'error' ? 'rgba(239,68,68,0.1)' : 'rgba(34,211,238,0.1)'};border-radius:8px;padding:10px;margin-bottom:8px;border:1px solid ${download.status === 'error' ? 'rgba(239,68,68,0.3)' : 'rgba(34,211,238,0.2)'};`">
+                    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+                        <div style="font-size:12px;color:#e6eef8;font-weight:600;" x-text="`Video #${download.video_id}`"></div>
+                        <div :style="`font-size:11px;color:${download.status === 'error' ? '#ef4444' : '#22d3ee'};`" x-text="download.status === 'error' ? 'ERROR' : `${download.progress}%`"></div>
+                    </div>
+                    <div style="height:6px;background:rgba(255,255,255,0.1);border-radius:3px;overflow:hidden;margin-bottom:6px;">
+                        <div :style="`width: ${download.progress}%;height:100%;background:${download.status === 'error' ? 'linear-gradient(90deg,#ef4444,#dc2626)' : 'linear-gradient(90deg,#22d3ee,#06b6d4)'};transition:width 0.3s;`"></div>
+                    </div>
+                    <div style="display:flex;justify-content:space-between;font-size:10px;color:#888;margin-bottom:4px;">
+                        <span x-text="download.speed || 'Calculating...'"></span>
+                        <span x-show="download.eta > 0 && download.status !== 'error'" x-text="`ETA: ${formatTime(download.eta)}`"></span>
+                    </div>
+                    <div x-show="download.error" style="font-size:10px;color:#ef4444;margin-top:4px;padding:4px;background:rgba(239,68,68,0.1);border-radius:4px;" x-text="download.error"></div>
+                </div>
+            </template>
+        </div>
+    </div>
+  
+  <div class="bg-orb orb-1"></div>
+  <div class="bg-orb orb-2"></div>
+  
+  <div class="drag-overlay" :class="{'active': dragCounter > 0}">
+      <span class="material-icons-round" style="font-size: 80px;">file_upload</span>
+      <h2>Drop .mp4, .mkv, .avi, .mov, .webm, .txt alebo .json súbor</h2>
+      <p style="color:#ccc;font-size:14px;">Importuj video priamo z disku alebo playlist/text/JSON</p>
+  </div>
+
+  <div class="modal-wrap" x-show="showSettings" style="display: none;" x-transition.opacity>
+      <div class="modal-card settings-card" style="max-width:calc(100vw - 40px);width:100%;" x-data="{ tab: 'appearance' }">
+          <div class="modal-header">
+              <h3><span class="material-icons-round">settings</span> Settings</h3>
+              <button @click="showSettings = false; saveSettings()"><span class="material-icons-round">close</span></button>
+          </div>
+          <div class="settings-tabs">
+              <button @click="tab = 'appearance'" :class="{'active': tab === 'appearance'}">Appearance</button>
+              <button @click="tab = 'playback'" :class="{'active': tab === 'playback'}">Playback</button>
+          </div>
+          <div class="settings-content">
+              <div x-show="tab === 'appearance'" class="settings-grid">
+                  <div class="set-group">
+                      <label>Theme</label>
+                      <select x-model="settings.theme">
+                          <option value="dark">Dark</option><option value="light">Light</option>
+                      </select>
+                  </div>
+                  <div class="set-group">
+                      <label>Accent Color</label>
+                      <div class="accent-picker">
+                          <button class="accent-swatch purple" @click="settings.accentColor = 'purple'" :class="{'active': settings.accentColor === 'purple'}"></button>
+                          <button class="accent-swatch blue" @click="settings.accentColor = 'blue'" :class="{'active': settings.accentColor === 'blue'}"></button>
+                          <button class="accent-swatch green" @click="settings.accentColor = 'green'" :class="{'active': settings.accentColor === 'green'}"></button>
+                          <button class="accent-swatch orange" @click="settings.accentColor = 'orange'" :class="{'active': settings.accentColor === 'orange'}"></button>
+                      </div>
+                  </div>
+              </div>
+              <div x-show="tab === 'playback'" class="settings-grid">
+                  <div class="set-group">
+                      <label>Autoplay</label>
+                      <label class="switch"><input type="checkbox" x-model="settings.autoplay"><span class="slider round"></span></label>
+                  </div>
+                  <div class="set-group">
+                      <label>Loop by default</label>
+                      <label class="switch"><input type="checkbox" x-model="settings.loop"><span class="slider round"></span></label>
+                  </div>
+                   <div class="set-group">
+                      <label>Default Playback Speed</label>
+                      <select x-model="settings.playbackSpeed">
+                          <option value="0.75">0.75x</option><option value="1.0">1.0x (Normal)</option><option value="1.25">1.25x</option><option value="1.5">1.5x</option><option value="2.0">2.0x</option>
+                      </select>
+                  </div>
+                  <div class="set-group">
+                      <label>Prefer HLS (Higher Quality)</label>
+                      <label class="switch"><input type="checkbox" x-model="settings.useHls"><span class="slider round"></span></label>
+                      <div style="font-size:11px; color:#888; margin-top:5px;">Check this and Regenerate video to get 1080p stream if available.</div>
+                  </div>
+                  <div class="set-group" style="grid-column: 1 / -1; border-top: 1px solid rgba(255,255,255,0.1); padding-top: 15px; margin-top: 10px;">
+                      <label style="font-weight: 600; color: #22d3ee; display: flex; align-items: center; gap: 6px;">
+                          <span class="material-icons-round" style="font-size: 18px;">speed</span>
+                          Import Speed
+                      </label>
+                      <select x-model="settings.importSpeed" style="margin-top: 8px;">
+                          <option value="default">Default - Kompletná (pomalšia, najpresnejšia)</option>
+                          <option value="fast">Fast - Stredná rýchlosť (menej yt-dlp, rýchlejšie thumbnaily)</option>
+                          <option value="turbo">Turbo - Maximálna rýchlosť (~5x rýchlejší, bez yt-dlp, len základné thumbnaily)</option>
+                      </select>
+                      <div style="font-size:11px; color:#888; margin-top:8px; line-height: 1.4;">
+                          <strong>Default:</strong> Kompletná extrakcia metadát, yt-dlp, GIF preview<br>
+                          <strong>Fast:</strong> Preskočí yt-dlp ak je možné, rýchlejšie thumbnaily, bez GIF<br>
+                          <strong>Turbo:</strong> Len základné metadáta, bez yt-dlp, len screenshot thumbnail
+                      </div>
+                  </div>
+                  <div class="set-group" style="grid-column: 1 / -1; border-top: 1px solid rgba(255,255,255,0.1); padding-top: 15px; margin-top: 10px;">
+                      <label style="font-weight: 600; color: #22d3ee; display: flex; align-items: center; gap: 6px;">
+                          <span class="material-icons-round" style="font-size: 18px;">bolt</span>
+                          Aria2c Turbo Download Settings
+                      </label>
+                      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 12px;">
+                          <div>
+                              <label style="font-size: 12px; color: #aaa; margin-bottom: 4px; display: block;">Max Connections per Server</label>
+                              <input type="number" x-model.number="settings.aria2MaxConnections" min="1" max="64" style="width: 100%; padding: 6px; background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.1); border-radius: 4px; color: #fff;">
+                          </div>
+                          <div>
+                              <label style="font-size: 12px; color: #aaa; margin-bottom: 4px; display: block;">Split Count</label>
+                              <input type="number" x-model.number="settings.aria2SplitCount" min="1" max="64" style="width: 100%; padding: 6px; background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.1); border-radius: 4px; color: #fff;">
+                          </div>
+                          <div>
+                              <label style="font-size: 12px; color: #aaa; margin-bottom: 4px; display: block;">Max Concurrent Downloads</label>
+                              <input type="number" x-model.number="settings.aria2MaxConcurrent" min="1" max="50" style="width: 100%; padding: 6px; background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.1); border-radius: 4px; color: #fff;">
+                          </div>
+                          <div>
+                              <label style="font-size: 12px; color: #aaa; margin-bottom: 4px; display: block;">Min Split Size</label>
+                              <select x-model="settings.aria2MinSplitSize" style="width: 100%; padding: 6px; background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.1); border-radius: 4px; color: #fff;">
+                                  <option value="512K">512 KB</option>
+                                  <option value="1M">1 MB</option>
+                                  <option value="2M">2 MB</option>
+                                  <option value="5M">5 MB</option>
+                              </select>
+                          </div>
+                      </div>
+                      <div style="font-size:11px; color:#888; margin-top:8px; line-height: 1.4;">
+                          <strong>Connections:</strong> Počet súčasných spojení na jeden server (viac = rýchlejšie, ale viac zaťaženie)<br>
+                          <strong>Splits:</strong> Na koľko častí sa rozdeli download (viac = rýchlejšie pre veľké súbory)<br>
+                          <strong>Concurrent:</strong> Koľko downloadov môže bežať naraz<br>
+                          <strong>Min Split:</strong> Minimálna veľkosť jednej časti (menšie = viac častí, ale môže byť pomalšie)
+                      </div>
+                      <button @click="saveAria2Config()" class="btn-primary" style="margin-top: 12px; width: 100%;">
+                          <span class="material-icons-round" style="font-size: 16px; vertical-align: middle; margin-right: 4px;">save</span>
+                          Save Aria2c Settings
+                      </button>
+                  </div>
+              </div>
+          </div>
+          <div class="modal-actions" style="margin-top: 20px;">
+            <button class="btn-primary" @click="showSettings = false; saveSettings()">Save & Close</button>
+          </div>
+      </div>
+  </div>
+
+  <div class="toast-container">
+      <template x-for="toast in toasts" :key="toast.id">
+          <div class="toast" :class="toast.type">
+              <span class="material-icons-round" x-text="toast.icon"></span>
+              <span x-text="toast.message"></span>
+          </div>
+      </template>
+  </div>
+
+  <div class="batch-bar" :class="{'visible': batchMode && selectedIds.length > 0}">
+      <div class="batch-count"><span x-text="selectedIds.length"></span> Selected</div>
+      <div class="batch-actions">
+          <button @click="runBatch('favorite')"><span class="material-icons-round">favorite</span> Fav</button>
+          <button @click="runBatch('mark_watched')"><span class="material-icons-round">visibility</span> Watched</button>
+          <div class="sep"></div>
+          <button class="danger" @click="runBatch('delete')"><span class="material-icons-round">delete</span> Delete</button>
+      </div>
+      <button class="close-batch" @click="toggleBatchMode(false)"><span class="material-icons-round">close</span></button>
+  </div>
+
+  <div class="app-layout">
+      <aside class="sidebar">
+          <div class="logo">Q <span>VIP</span></div>
+          <nav>
+              <a href="#" @click.prevent="filters.favoritesOnly=false; loadVideos(true)" :class="{'active': !filters.favoritesOnly}">
+                  <span class="material-icons-round">dashboard</span> Gallery
+              </a>
+              <a href="#" @click.prevent="filters.favoritesOnly=true; loadVideos(true)" :class="{'active': filters.favoritesOnly}">
+                  <span class="material-icons-round">favorite</span> Favorites
+              </a>
+              <a href="/stats" @click.prevent="window.location.href='/stats'">
+                  <span class="material-icons-round">bar_chart</span> Statistics
+              </a>
+              <div class="sep"></div>
+              <div class="nav-label">Smart Playlists</div>
+              <template x-for="p in smartPlaylists" :key="p.id">
+                <a href="#" @click.prevent="loadSmartPlaylist(p.id)" :class="{'active': activeSmartPlaylistId === p.id}">
+                  <span class="material-icons-round">playlist_play</span>
+                  <span x-text="p.name"></span>
+                </a>
+              </template>
+              <button class="btn-ghost" @click="openSmartPlaylistModal()" style="width: 100%; margin-top: 10px;">
+                <span class="material-icons-round">add</span> New Playlist
+              </button>
+              <div class="sep"></div>
+              <div class="nav-label">Batches</div>
+              <div class="batch-controls" style="display: flex; gap: 8px; align-items: center;">
+                  <select x-model="filters.batch" @change="loadVideos(true)" class="batch-select" style="flex: 1;">
+                      <option value="All">All Imports</option>
+                      <template x-for="batch in batches" :key="batch"><option :value="batch" x-text="batch"></option></template>
+                  </select>
+                  <button class="btn-ghost" @click="deleteCurrentBatch" title="Delete Batch" style="padding: 8px; color: #ef4444; border-color: #3f3f46;">
+                      <span class="material-icons-round" style="font-size: 18px;">delete</span>
+                  </button>
+              </div>
+          </nav>
+          <div class="sidebar-footer">
+              <button class="btn-ghost" @click="showSettings = true" style="margin-bottom: 10px; width: 100%" aria-label="Open settings">
+                  <span class="material-icons-round">settings</span> Settings
+              </button>
+              <input type="file" x-ref="fileInput" style="display:none" accept=".txt,.json,.mp4,.mkv,.avi,.mov,.webm,.csv" @change="handleFileSelect" aria-hidden="true" aria-label="Import file input">
+              <button class="btn-import" @click="$refs.fileInput.click()" aria-label="Open file to import">
+                   <span class="material-icons-round">folder_open</span> Open File
+              </button>
+              <input type="file" x-ref="xvideosInput" accept=".txt" style="display:none" @change="handleXVideosFileSelect">
+              <button class="btn-ghost" @click="$refs.xvideosInput.click()" style="margin-top: 10px; width: 100%; color: #f59e42;" aria-label="Import XVideos URLs">
+                   <span class="material-icons-round">smart_display</span> Import XVideos
+              </button>
+              <button class="btn-ghost" @click="showCoomerModal = true" style="margin-top: 10px; width: 100%; color: #ec4899;" aria-label="Import Coomer Creator">
+                   <span class="material-icons-round">person_search</span> Import Coomer
+              </button>
+              <button class="btn-ghost" @click="playRandomVideo()" style="margin-top: 10px; width: 100%;">
+                <span class="material-icons-round">shuffle</span> Surprise Me
+              </button>
+              <button class="btn-ghost" @click="showShortcutsModal = true" style="margin-top: 10px; width: 100%;">
+                <span class="material-icons-round">keyboard</span> Shortcuts
+              </button>
+              <button class="btn-ghost" @click="showCSVModal = true" style="margin-top:10px; width:100%; color:#aaa; font-size:12px" aria-label="Import CSV">
+                  Import CSV
+              </button>
+              <div class="modal-wrap" x-show="showCSVModal" style="display: none;" x-transition.opacity>
+              <div class="modal-card" style="max-width:calc(100vw - 40px);width:100%;">
+                  <div class="modal-header">
+                      <h3><span class="material-icons-round">table_view</span> Import CSV</h3>
+                      <button @click="showCSVModal = false"><span class="material-icons-round">close</span></button>
+                  </div>
+                  <div class="modal-content">
+                      <input type="file" x-ref="csvInput" accept=".csv" @change="handleCSVSelect" style="width:100%;margin-bottom:10px;">
+                      <div style="font-size:13px;color:#888;">Vyber .csv súbor s videami/galériami na import.</div>
+                  </div>
+                  <div class="modal-actions" style="display:flex;gap:10px;justify-content:flex-end;">
+                      <button class="btn-ghost" @click="showCSVModal = false">Cancel</button>
+                  </div>
+              </div>
+              </div>
+                <button class="btn-ghost" @click="showImportModal = true" style="margin-top:10px; width:100%; color:#aaa; font-size:12px" aria-label="Paste text URLs">
+                    Paste URLs / Playlists
+                </button>
+            <div class="modal-wrap" x-show="showImportModal" style="display: none;" x-transition.opacity>
+                <div class="modal-card" style="max-width:calc(100vw - 40px);width:100%;">
+                    <div class="modal-header">
+                        <h3><span class="material-icons-round">playlist_add</span> Import URLs / Playlist</h3>
+                        <button @click="showImportModal = false"><span class="material-icons-round">close</span></button>
+                    </div>
+                    <div class="modal-content">
+                        <textarea x-model="importTextContent" placeholder="Paste playlist URL (e.g. https://www.xvideos.com/playlist/...) or multiple video URLs (one per line)" rows="6" style="width:100%;margin-bottom:10px;"></textarea>
+                        <input type="text" x-model="newBatchName" placeholder="Optional batch name" style="width:100%;margin-bottom:10px;">
+                        <div style="margin-bottom:10px;">
+                            <label style="font-size:13px;">Parser:</label>
+                            <select x-model="selectedParser" style="width:100%;">
+                                <option value="yt-dlp">yt-dlp (default, universal)</option>
+                                <option value="cyberdrop-dl-patched">cyberdrop-dl-patched (for cyberdrop, gofile, etc.)</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="modal-actions" style="display:flex;gap:10px;justify-content:flex-end;">
+                        <button class="btn-ghost" @click="showImportModal = false">Cancel</button>
+                        <button class="btn-primary" @click="importFromText">Import</button>
+                    </div>
+                </div>
+            </div>
+                            <button class="btn-ghost" @click="showEpornerModal = true" style="margin-top:10px; width:100%; color:#aaa; font-size:12px" aria-label="Import Eporner">
+                                        Import Eporner
+                                </button>
+            <div class="modal-wrap" x-show="showEpornerModal" style="display: none;" x-transition.opacity>
+                <div class="modal-card" style="max-width:calc(100vw - 40px);width:100%;">
+                    <div class="modal-header">
+                        <h3><span class="material-icons-round">cloud_download</span> Import Eporner</h3>
+                        <button @click="showEpornerModal = false"><span class="material-icons-round">close</span></button>
+                    </div>
+                    <div class="modal-content">
+                        <div style="margin-bottom:10px;">
+                            <label style="font-size:13px;">Eporner Playlist/URL:</label>
+                            <input type="text" x-model="epornerUrl" placeholder="https://www.eporner.com/playlist/xyz..." style="width:100%;margin-bottom:10px;">
+                        </div>
+                        <div style="margin-bottom:10px; text-align:center; font-weight:bold;">ALEBO</div>
+                        <div style="margin-bottom:10px;">
+                            <label style="font-size:13px;">Search Query:</label>
+                            <input type="text" x-model="epornerQuery" placeholder="napr. blonde girls" style="width:100%;margin-bottom:10px;">
+                            <label style="font-size:13px;">Počet videí:</label>
+                            <input type="number" x-model.number="epornerCount" min="1" max="100" style="width:100%;margin-bottom:10px;">
+                            <label style="font-size:13px;">Minimálna kvalita (napr. 1080):</label>
+                            <input type="number" x-model.number="epornerMinQuality" min="0" max="2160" step="1" style="width:100%;margin-bottom:10px;">
+                        </div>
+                    </div>
+                    <div class="modal-actions" style="display:flex;gap:10px;justify-content:flex-end;">
+                        <button class="btn-ghost" @click="showEpornerModal = false">Cancel</button>
+                        <button class="btn-primary" @click="importEporner">Import</button>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-wrap" x-show="showCoomerModal" style="display: none;" x-transition.opacity>
+                <div class="modal-card" style="max-width:calc(100vw - 40px);width:100%;max-height:90vh;">
+                    <div class="modal-header">
+                        <h3><span class="material-icons-round">person_search</span> Import Coomer</h3>
+                        <button @click="showCoomerModal = false; coomerUrl = ''; coomerProfileData = null; coomerSelectedVideos = []"><span class="material-icons-round">close</span></button>
+                    </div>
+                    <div class="modal-content">
+                        <div style="margin-bottom:15px;">
+                            <label style="font-size:13px;font-weight:600;">Coomer/Kemono Creator (URL alebo username):</label>
+                            <div style="display:flex;gap:8px;margin-top:5px;">
+                                <input type="text" x-model="coomerUrl" placeholder="https://coomer.st/... alebo username" style="flex:1;">
+                                <button class="btn-primary" @click="scanCoomerProfile()" :disabled="isScanningCoomer">
+                                    <span x-show="!isScanningCoomer">Scan</span>
+                                    <span x-show="isScanningCoomer">Scanning...</span>
+                                </button>
+                            </div>
+                            <div style="font-size:12px;color:#888;margin-top:5px;">Zadaj URL creator profilu alebo username (podporované: coomer.st, coomer.si, coomer.party, kemono.party, kemono.su, atď.)</div>
+                        </div>
+                        
+                        <template x-if="coomerProfileData">
+                            <div style="border-top:1px solid #333;padding-top:15px;margin-top:15px;">
+                                <!-- Rating & Badge Display -->
+                                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:15px;padding:12px;background:rgba(34,211,238,0.1);border-radius:8px;border:1px solid rgba(34,211,238,0.3);">
+                                    <div>
+                                        <h4 style="margin:0;color:#e6eef8;" x-text="coomerProfileData.creator"></h4>
+                                        <div style="font-size:12px;color:#888;margin-top:3px;" x-text="`${coomerProfileData.videos.length} videos found`"></div>
+                                    </div>
+                                    <div style="text-align:right;">
+                                        <div style="font-size:28px;font-weight:bold;color:#22d3ee;" x-text="coomerProfileData.rating"></div>
+                                        <div style="font-size:11px;color:#888;">Rating (0-10)</div>
+                                    </div>
+                                </div>
+                                
+                                <!-- Badge -->
+                                <div style="margin-bottom:15px;">
+                                    <div style="display:inline-block;padding:6px 12px;border-radius:6px;font-size:12px;font-weight:600;"
+                                         :style="coomerProfileData.badge === 'FULL-LENGTH' ? 'background:#10b981;color:#fff;' : 
+                                                (coomerProfileData.badge === 'MIXED' ? 'background:#f59e0b;color:#fff;' : 'background:#ef4444;color:#fff;')"
+                                         x-text="coomerProfileData.badge"></div>
+                                    <div style="font-size:11px;color:#888;margin-top:5px;" 
+                                         x-text="coomerProfileData.badge === 'FULL-LENGTH' ? 'Import entire profile' : 
+                                                (coomerProfileData.badge === 'MIXED' ? 'Import videos only' : 'Skip - Low quality profile')"></div>
+                                </div>
+                                
+                                <!-- Video List (only show if not SKIP) -->
+                                <template x-if="coomerProfileData.badge !== 'SKIP'">
+                                    <div>
+                                        <div style="font-size:11px;color:#aaa;margin-bottom:8px;">
+                                            Selected: <span style="color:#22d3ee;" x-text="coomerSelectedVideos.length"></span> / <span x-text="coomerProfileData.videos.length"></span>
+                                        </div>
+                                        
+                                        <div style="max-height:300px;overflow-y:auto;border:1px solid #333;border-radius:8px;padding:10px;">
+                                            <template x-for="(video, idx) in coomerProfileData.videos" :key="idx">
+                                                <div style="display:flex;align-items:center;gap:10px;padding:8px;border-bottom:1px solid #222;cursor:pointer;" 
+                                                     @click="toggleCoomerVideo(video.url)"
+                                                     :style="coomerSelectedVideos.includes(video.url) ? 'background:#1e3a5f;' : ''">
+                                                    <input type="checkbox" :checked="coomerSelectedVideos.includes(video.url)" @click.stop="toggleCoomerVideo(video.url)" style="cursor:pointer;">
+                                                    <div style="flex:1;min-width:0;">
+                                                        <div style="font-size:12px;color:#e6eef8;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;" x-text="video.title"></div>
+                                                        <div style="font-size:11px;color:#888;" x-text="video.size_mb > 0 ? `${Math.round(video.size_mb)}MB` : 'Size unknown'"></div>
+                                                    </div>
+                                                </div>
+                                            </template>
+                                        </div>
+                                    </div>
+                                </template>
+                                
+                                <!-- SKIP message -->
+                                <template x-if="coomerProfileData.badge === 'SKIP'">
+                                    <div style="padding:20px;text-align:center;background:rgba(239,68,68,0.1);border-radius:8px;border:1px solid rgba(239,68,68,0.3);">
+                                        <div style="color:#ef4444;font-weight:600;margin-bottom:8px;">Profile does not meet quality standards</div>
+                                        <div style="font-size:12px;color:#888;">Rating too low (≤5). This profile contains mostly low-quality content.</div>
+                                    </div>
+                                </template>
+                            </div>
+                        </template>
+                    </div>
+                    <div class="modal-actions" style="display:flex;gap:10px;justify-content:flex-end;margin-top:15px;">
+                        <button class="btn-ghost" @click="showCoomerModal = false; coomerUrl = ''; coomerProfileData = null; coomerSelectedVideos = []">Cancel</button>
+                        <button class="btn-primary" @click="importCoomer()" 
+                                x-show="coomerProfileData && coomerProfileData.badge !== 'SKIP' && coomerSelectedVideos.length > 0" 
+                                :disabled="coomerSelectedVideos.length === 0">
+                            Import <span x-text="coomerSelectedVideos.length"></span> Videos
+                        </button>
+                    </div>
+                </div>
+            </div>
+          </div>
+      </aside>
+
+      <main class="content">
+          <header class="top-bar">
+              <div class="search-wrapper">
+                  <span class="material-icons-round">search</span>
+                  <input type="text" x-model.debounce.500ms="filters.search" @input="showMegaSearch=false" placeholder="Search titles, tags...">
+              </div>
+              <div class="top-actions">
+                  <a :href="exportUrl" download="export.json" class="top-action-btn" title="Export current view as JSON">
+                      <span class="material-icons-round">file_download</span>
+                  </a>
+                  <button @click="showMegaSearch = true" title="Super Search (Ctrl+K)"><span class="material-icons-round">bolt</span></button>
+                  <button @click="toggleSplitScreen()" :class="{'active': splitScreenMode}" title="Split Screen Mode (S)"><span class="material-icons-round">view_column</span></button>
+                  <button @click="toggleBatchMode()" :class="{'active': batchMode}" title="Batch Select Mode"><span class="material-icons-round">checklist</span></button>
+                  <div class="filter-dropdown-trigger" @click="showFilters = !showFilters"><span class="material-icons-round">tune</span> Filters</div>
+              </div>
+          </header>
+
+          <div class="filter-panel" x-show="showFilters" x-transition>
+              <div class="filter-row">
+                  <div class="f-group">
+                      <label>Sort By</label>
+                      <select x-model="filters.sort" @change="loadVideos(true)">
+                          <option value="date_desc">Newest Added</option>
+                          <option value="title_asc">Title A-Z</option>
+                          <option value="longest">Duration</option>
+                      </select>
+                  </div>
+                  <div class="f-group">
+                      <label>Quality</label>
+                      <select x-model="filters.quality" @change="loadVideos(true)">
+                          <option value="All">All</option><option value="4K">4K</option><option value="1440p">1440p</option><option value="1080p">1080p</option><option value="720p">720p</option><option value="SD">SD</option>
+                      </select>
+                  </div>
+                  <div class="f-group wide">
+                      <label>Duration Range</label>
+                      <div style="margin-bottom:8px;">
+                          <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;">
+                              <input type="range" min="0" max="3600" step="60" x-model="filters.durationMin" @change="loadVideos(true)" style="flex:1;">
+                              <div style="min-width:90px;font-size:12px;color:#22d3ee;text-align:center;font-weight:600;background:rgba(34,211,238,0.1);padding:4px 8px;border-radius:4px;" x-text="formatDuration(filters.durationMin)"></div>
+                          </div>
+                          <div style="display:flex;align-items:center;gap:10px;">
+                              <input type="range" min="0" max="3600" step="60" x-model="filters.durationMax" @change="loadVideos(true)" style="flex:1;">
+                              <div style="min-width:90px;font-size:12px;color:#22d3ee;text-align:center;font-weight:600;background:rgba(34,211,238,0.1);padding:4px 8px;border-radius:4px;" x-text="formatDuration(filters.durationMax)"></div>
+                          </div>
+                      </div>
+                      <div style="display:flex;gap:8px;margin-top:8px;">
+                          <input type="number" min="0" max="3600" step="60" x-model.number="filters.durationMin" @change="loadVideos(true)" placeholder="Min (sec)" style="flex:1;padding:6px;background:#1a1a1f;border:1px solid #333;border-radius:4px;color:#e6eef8;font-size:12px;">
+                          <input type="number" min="0" max="3600" step="60" x-model.number="filters.durationMax" @change="loadVideos(true)" placeholder="Max (sec)" style="flex:1;padding:6px;background:#1a1a1f;border:1px solid #333;border-radius:4px;color:#e6eef8;font-size:12px;">
+                      </div>
+                      <div style="font-size:11px;color:#888;margin-top:6px;text-align:center;padding:6px;background:rgba(34,211,238,0.05);border-radius:4px;">
+                          <strong style="color:#22d3ee;">Range:</strong> <span x-text="formatDuration(filters.durationMin)"></span> - <span x-text="formatDuration(filters.durationMax)"></span>
+                      </div>
+                  </div>
+              </div>
+              <div class="filter-row" style="margin-top: 15px;">
+                  <div class="f-group">
+                      <label>Date From</label>
+                      <input type="date" x-model="filters.dateMin" @change="loadVideos(true)" class="date-filter-input">
+                  </div>
+                  <div class="f-group">
+                      <label>Date To</label>
+                      <input type="date" x-model="filters.dateMax" @change="loadVideos(true)" class="date-filter-input">
+                  </div>
+              </div>
+              <div class="filter-row" style="margin-top: 15px;">
+                <div class="f-group" style="flex-basis: 100%;">
+                    <label>Filter by Tag</label>
+                    <div class="tag-filter-container">
+                        <template x-for="tag in tags" :key="tag">
+                            <button class="tag-filter-btn" @click="setTagFilter(tag)" x-text="tag"></button>
+                        </template>
+                    </div>
+                </div>
+              </div>
+          </div>
+
+          <div class="vip-grid">
+            <template x-if="batchMode && selectedIds.length > 0">
+                <div style="width:100%;margin-bottom:10px;display:flex;justify-content:flex-end;gap:8px;">
+                    <button class="btn-primary" @click="turboDownloadBatch()" style="display:flex;align-items:center;gap:6px;background:linear-gradient(135deg, #22d3ee 0%, #06b6d4 100%);">
+                        <span class="material-icons-round">bolt</span> Turbo Download (<span x-text="selectedIds.length"></span>)
+                    </button>
+                    <button class="btn-primary" @click="regenerateThumbAll()" style="display:flex;align-items:center;gap:6px;">
+                        <span class="material-icons-round">refresh</span> Refresh All označené
+                    </button>
+                </div>
+            </template>
+              <template x-for="video in videos" :key="video.id">
+                  <div class="v-card" :class="{'selected': isSelected(video.id), 'batch-hover': batchMode}"
+                       @click="handleCardClick(video)" @mouseenter="startPreview(video)" @mouseleave="stopPreview(video)">
+                      
+                      <div class="thumb-wrapper">
+                         <img :src="video.thumbnail_path || '/static/placeholder.jpg'" :alt="video.title" class="static-thumb" loading="lazy">
+                         <img :src="video.gif_preview_path" alt="preview" class="gif-thumb" x-show="hoverVideoId === video.id && video.gif_preview_path" x-cloak>
+                          <div class="status-badge" x-show="video.status !== 'ready'" :class="getStatusClass(video.status)" x-text="video.status"></div>
+                          <div class="regen-btn" @click.stop="regenerateThumb(video)" title="Regenerate Thumbnails & GIF" aria-label="Regenerate thumbnail">
+                              <span class="material-icons-round">refresh</span>
+                          </div>
+                          <div class="duration-chip" x-text="formatDuration(video.duration)"></div>
+                          <div class="quality-chip" x-text="getQuality(video.height)" :class="getQualityClass(video.height)" :title="getQualityTitle(video.width, video.height)"></div>
+                          <div class="select-check" x-show="batchMode"><span class="material-icons-round" x-text="isSelected(video.id) ? 'check_box' : 'check_box_outline_blank'"></span></div>
+                          <div class="progress-track" x-show="video.resume_time > 0"><div class="progress-fill" :style="`width: ${(video.resume_time/video.duration)*100}%`"></div></div>
+                      </div>
+                      
+                      <div class="v-meta">
+                          <div class="v-title-row">
+                            <div class="v-title" x-text="video.title"></div>
+                            <div style="display:flex;gap:4px;">
+                              <button @click.stop="turboDownload(video.id)" title="Turbo Download (Aria2c)" class="download-btn" style="padding:4px;background:rgba(34,211,238,0.2);border-radius:4px;border:none;cursor:pointer;color:#22d3ee;">
+                                <span class="material-icons-round" style="font-size:18px;">bolt</span>
+                              </button>
+                              <a :href="`/download/${video.id}`" @click.stop title="Download Video" class="download-btn"><span class="material-icons-round">file_download</span></a>
+                            </div>
+                          </div>
+                          <div class="v-tags">
+                              <span x-show="isNew(video.created_at)" class="tag-new">NEW</span>
+                              <template x-for="tag in (video.tags || '').split(',').slice(0,3)"><span x-show="tag" x-text="tag"></span></template>
+                          </div>
+                          <div class="v-tags ai-tags">
+                              <template x-for="tag in (video.ai_tags || '').split(',').slice(0,3)"><span x-show="tag" x-text="tag"></span></template>
+                          </div>
+                      </div>
+                  </div>
+              </template>
+          </div>
+          
+          <div class="load-more-area" x-show="hasMore && !isLoading">
+              <button class="btn-load-more" @click="loadVideos(false)">
+                  Load Next 10 <span class="material-icons-round">expand_more</span>
+              </button>
+          </div>
+          <div id="scrollTrigger" class="loader-area"><div x-show="isLoading" class="spinner"></div></div>
+      </main>
+  </div>
+
+  <!-- Smart Playlist Modal -->
+  <div class="modal-wrap" x-show="showSmartPlaylistModal" style="display: none;" x-transition.opacity>
+      <div class="modal-card" style="max-width:calc(100vw - 40px);width:100%;">
+          <div class="modal-header">
+              <h3 x-text="editingPlaylistId ? 'Edit Smart Playlist' : 'Create Smart Playlist'"></h3>
+              <button @click="showSmartPlaylistModal = false"><span class="material-icons-round">close</span></button>
+          </div>
+          <div class="modal-content">
+              <input type="text" x-model="smartPlaylistForm.name" placeholder="Playlist Name" style="width: 100%; margin-bottom: 15px;">
+              
+              <div class="rule-builder">
+                  <template x-for="(rule, index) in smartPlaylistForm.rules" :key="index">
+                      <div class="rule-row">
+                          <select x-model="rule.field">
+                              <option value="title">Title</option>
+                              <option value="tags">Tags</option>
+                              <option value="ai_tags">AI Tags</option>
+                              <option value="batch_name">Batch Name</option>
+                              <option value="duration">Duration</option>
+                          </select>
+                          <select x-model="rule.operator">
+                              <option value="contains">Contains</option>
+                              <option value="not_contains">Not Contains</option>
+                              <option value="equals">Equals</option>
+                              <option value="not_equals">Not Equals</option>
+                              <option value="greater_than">Greater Than</option>
+                              <option value="less_than">Less Than</option>
+                          </select>
+                          <input type="text" x-model="rule.value" placeholder="Value">
+                          <button @click="removeSmartPlaylistRule(index)" class="btn-ghost" style="color: #ef4444;"><span class="material-icons-round">delete</span></button>
+                      </div>
+                  </template>
+              </div>
+              <button @click="addSmartPlaylistRule" class="btn-ghost" style="margin-top: 10px;"><span class="material-icons-round">add</span> Add Rule</button>
+          </div>
+          <div class="modal-actions">
+              <button class="btn-ghost" @click="showSmartPlaylistModal = false">Cancel</button>
+              <button class="btn-primary" @click="saveSmartPlaylist">Save Playlist</button>
+          </div>
+      </div>
+  </div>
+
+    <div class="modal-wrap command-palette-wrap" x-show="showCommandPalette" @click.self="showCommandPalette=false" style="display: none;" x-transition.opacity>
+        <div class="modal-card command-palette-card">
+            <div class="command-palette-input">
+                <span class="material-icons-round">search</span>
+                <input type="text" x-model.debounce.300ms="commandQuery" placeholder="Search for videos or run commands (e.g. >theme)" x-ref="commandInput">
+            </div>
+            <div class="command-palette-results">
+                <template x-if="isCommandSearching"><div class="spinner" style="margin-top: 40px;"></div></template>
+                <template x-if="!isCommandSearching && commandResults.length === 0 && commandQuery.length > 1"><p class="no-results">No results found.</p></template>
+                <template x-for="result in commandResults" :key="result.id">
+                    <div class="result-item" @click="executeCommandResult(result)">
+                        <template x-if="result.type === 'command'">
+                            <div class="command-result"><span class="material-icons-round" x-text="result.icon"></span><span x-text="result.title"></span></div>
+                        </template>
+                        <template x-if="result.type === 'video'">
+                            <div class="video-result">
+                                <img :src="result.thumbnail_path || '/static/placeholder.jpg'" class="result-thumb">
+                                <div class="result-meta"><h4 x-text="result.title"></h4><p x-html="highlight(result.subtitle, commandQuery)"></p></div>
+                            </div>
+                        </template>
+                    </div>
+                </template>
+            </div>
+        </div>
+    </div>
+
+  <div class="player-overlay" x-show="showPlayer" x-transition.opacity @click.self="closePlayer">
+      <div class="player-container" :class="{'split-view': splitScreenMode}">
+          <template x-if="activeVideo">
+              <div class="player-box box-1" @click="activePlayerIdx = 0" :class="{'active-focus': activePlayerIdx === 0}">
+                 <div class="video-wrapper">
+                     <video x-ref="videoPlayer1" controls playsinline 
+                            :src="activeVideo ? `/stream_proxy/${activeVideo.id}.mp4` : ''" 
+                            :autoplay="settings.autoplay" :loop="settings.loop"
+                            :style="getPlayerStyle(0)"
+                            @timeupdate="onTimeUpdate($event, activeVideo)"
+                            :aria-label="`Video player: ${activeVideo?.title || ''}`"></video>
+                    <div class="player-header">
+                        <h2 x-text="activeVideo ? activeVideo.title : ''"></h2>
+                        <div class="p-actions">
+                            <button @click="togglePip()" title="Picture-in-Picture (I)"><span class="material-icons-round">picture_in_picture_alt</span></button>
+                            <button @click="screenshot(0)" title="Screenshot"><span class="material-icons-round">camera_alt</span></button>
+                            <button @click="closePlayer()" title="Close (Esc)"><span class="material-icons-round">close</span></button>
+                        </div>
+                    </div>
+                 </div>
+              </div>
+          </template>
+          <template x-if="splitScreenMode">
+              <div class="player-box box-2" @click="activePlayerIdx = 1" :class="{'active-focus': activePlayerIdx === 1}">
+                  <template x-if="activeVideo2">
+                      <div class="video-wrapper">
+                          <video x-ref="videoPlayer2" controls playsinline 
+                                 :src="activeVideo2 ? `/stream_proxy/${activeVideo2.id}.mp4` : ''" 
+                                 :autoplay="settings.autoplay" :loop="settings.loop"
+                                 :style="getPlayerStyle(1)"
+                                 :aria-label="`Video player: ${activeVideo2?.title || ''}`"></video>
+                           <div class="player-header">
+                             <h2 x-text="activeVideo2 ? activeVideo2.title : ''"></h2>
+                             <div class="p-actions">
+                                 <button @click="screenshot(1)" title="Screenshot"><span class="material-icons-round">camera_alt</span></button>
+                                 <button @click="activeVideo2 = null" title="Close"><span class="material-icons-round">close</span></button>
+                             </div>
+                           </div>
+                      </div>
+                  </template>
+                  <template x-if="!activeVideo2">
+                      <div class="empty-split-slot">
+                          <span class="material-icons-round">add_to_queue</span>
+                          <p>Select from gallery</p>
+                      </div>
+                  </template>
+              </div>
+          </template>
+      </div>
+
+      <div class="video-controls-bar" x-show="showPlayer" @click.stop>
+          <div class="vc-row">
+              <div class="vc-group"><span class="material-icons-round">brightness_6</span><input type="range" min="0" max="200" x-model="vFilters.brightness"></div>
+              <div class="vc-group"><span class="material-icons-round">contrast</span><input type="range" min="0" max="200" x-model="vFilters.contrast"></div>
+              <div class="vc-group"><span class="material-icons-round">palette</span><input type="range" min="0" max="200" x-model="vFilters.saturate"></div>
+              <div class="vc-group">
+                  <span class="material-icons-round">filter_vintage</span>
+                  <select x-model="vFilters.preset" class="filter-preset-select">
+                      <option value="none">None</option><option value="grayscale">Grayscale</option><option value="sepia">Sepia</option><option value="invert">Invert</option><option value="thermal">Thermal</option><option value="nightvision">Night Vision</option>
+                  </select>
+              </div>
+              <div class="vc-group sep"><span class="material-icons-round">zoom_in</span><input type="range" min="1" max="3" step="0.1" x-model="vFilters.zoom"></div>
+              <button class="vc-btn" @click="resetFilters">Reset</button>
+          </div>
+      </div>
+  </div>
+
+  <script>
+    // Only register fallback if a real dashboard isn't provided by /static/main.js
+    if (!window.vipDashboard) {
+      window.vipDashboard = function() {
+         return {
+         showPlayer: false, showSettings: false, showImportModal: false, showFilters: false, dragCounter: 0, batchMode: false, splitScreenMode: false, selectedIds: [], toasts: [], videos: [], batches: ['All'], filters: { search: '', sort: 'date_desc', favoritesOnly: false, batch: 'All', durationMin: 0, durationMax: 3600 }, isLoading: false, hasMore: true, hoverVideoId: null, previewIndex: 0, previewInterval: null, settings: { genSpeed: 'fast', autoplay: false, loop: false }, activeVideo: null, activeVideo2: null, activePlayerIdx: 0, vFilters: { brightness: 100, contrast: 100, saturate: 100, zoom: 1 }, importTextContent: '', newBatchName: '', isImporting: false,
+         showToast(m, i, t='info') { const id=Date.now()+Math.random(); this.toasts.push({id, message:m, icon:i, type:t}); setTimeout(()=>this.toasts=this.toasts.filter(x=>x.id!==id), 3000); },
+         loadVideos(reset = true) {}, handleFileSelect(e) {}, importFromText() {}, toggleBatchMode(enable = null) {}, handleCardClick(video) {}, runBatch(action) {}, deleteCurrentBatch() {}, startPreview(video) {}, stopPreview() {}, updatePreview(e, video) {}, formatDuration(sec) {}, getQuality(h) {}, getQualityClass(h) {}, isNew(ts) {}, regenerateThumb(video) {}, closePlayer() {}, screenshot(idx) {}, getPlayerStyle() {}, onTimeUpdate(e, video) {}, resetFilters() {}
+         }
+      };
+      console.info('Using dashboard fallback (window.__dashboard_fallback__).');
+    }
+    
+    // Register fallback as component if main.js fails to load or hasn't run yet
+    document.addEventListener('alpine:init', () => {
+        if (!Alpine.data('dashboard')) {
+             Alpine.data('dashboard', window.vipDashboard);
+        }
+    });
+  </script>
+
+  <div class="modal-wrap" x-show="showShortcutsModal" style="display: none;" x-transition.opacity>
+      <div class="modal-card" style="max-width:calc(100vw - 40px);width:100%;">
+          <div class="modal-header">
+              <h3><span class="material-icons-round">keyboard</span> Keyboard Shortcuts</h3>
+              <button @click="showShortcutsModal = false"><span class="material-icons-round">close</span></button>
+          </div>
+          <table>
+              <thead>
+                  <tr>
+                      <th>Key</th>
+                      <th>Action</th>
+                  </tr>
+              </thead>
+              <tbody>
+                  <tr>
+                      <td><kbd>Ctrl</kbd> + <kbd>K</kbd></td>
+                      <td>Open Super Search</td>
+                  </tr>
+                  <tr>
+                      <td><kbd>Esc</kbd></td>
+                      <td>Close any modal, player, or batch mode</td>
+                  </tr>
+                  <tr>
+                      <td><kbd>Space</kbd></td>
+                      <td>Play/Pause video (in player)</td>
+                  </tr>
+                  <tr>
+                      <td><kbd>S</kbd></td>
+                      <td>Toggle Split Screen (in player)</td>
+                  </tr>
+                  <tr>
+                      <td><kbd>F</kbd></td>
+                      <td>Toggle Fullscreen (in player)</td>
+                  </tr>
+                  <tr>
+                      <td><kbd>I</kbd></td>
+                      <td>Toggle Picture-in-Picture (in player)</td>
+                  </tr>
+              </tbody>
+          </table>
+      </div>
+  </div>
+</body>
+</html>

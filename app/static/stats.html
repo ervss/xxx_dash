@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Quantum VIP - Statistics</title>
+    <link rel="stylesheet" href="/static/style.css">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        .chart-container {
+            width: 80%;
+            max-width: 800px;
+            margin: 40px auto;
+            padding: 20px;
+            background: #2d2d2d;
+            border-radius: 8px;
+        }
+        h1 { text-align: center; }
+        #back-link {
+            display: block;
+            text-align: center;
+            margin-bottom: 20px;
+            font-size: 1.2em;
+            color: #00aaff;
+        }
+    </style>
+</head>
+<body x-data="statsPage()" x-init="init()">
+    <a href="/" id="back-link">← Back to Dashboard</a>
+    <h1>Statistics</h1>
+
+    <div class="chart-container">
+        <h2>Videos per Batch</h2>
+        <canvas id="batchChart"></canvas>
+    </div>
+
+    <div class="chart-container">
+        <h2>Top 20 Tags</h2>
+        <canvas id="tagsChart"></canvas>
+    </div>
+
+    <div class="chart-container">
+        <h2>Videos by Quality</h2>
+        <canvas id="qualityChart"></canvas>
+    </div>
+
+    <script src="/static/stats.js" defer></script>
+</body>
+</html>
